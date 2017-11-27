@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+
+import argparse
+from copy import deepcopy
+import errno
+import itertools
+import pathlib
+import sys
+
+import yaml
+
+
+def sub_vars(text, env):
+    _text = deepcopy(text)
+
+    for var, val in env.items():
+        _text = _text.replace("${{{}}}".format(var), str(val))
+    return _text
+
+
+def parse_conds(conds):
+    conds_parsed = []
+    for cond in conds:
+
+        # Convert any single elements into singleton lists
+        for k, v in cond.items():
+            cond[k] = [v] if not isinstance(v, list) else v
+
+        cond_expand = [[(k, e) for e in v] for k, v in cond.items()]
+        cart_product = itertools.product(*cond_expand)
+        for cond_tuple in cart_product:
+            conds_parsed.append(list(cond_tuple))
+    return conds_parsed
+
+
+def apply_cond(cond, env):
+    _env = deepcopy(env)
+    for k, v in dict(cond).items():
+        _env[k] = v
+    return _env
+
+
+def process_rule(rule, env):
+
+    try:
+        with open(rule['file'], 'r') as f:
+            text = f.read()
+    except (FileNotFoundError, IOError):
+        print('Could not open rule file {}'.format(rule['file']),
+              file=sys.stderr)
+        return None
+
+    outtext = ''
+
+    if 'conds' in rule:
+        for c in parse_conds(rule['conds']):
+            _env = apply_cond(c, env)
+            outtext += "{}\n".format(sub_vars(text, _env))
+    else:
+        outtext = "{}\n".format(sub_vars(text, env))
+
+    return outtext
+
+
+def process_rulebook(path, rule_dir, out_dir):
+
+    try:
+        with open(path, 'r') as f:
+            rulebook_data = yaml.load(f)
+    except (FileNotFoundError, IOError):
+        print('Could not open rulebook {}'.format(path), file=sys.stderr)
+        return
+    except yaml.YAMLError as exc:
+        if hasattr(exc, 'problem_mark'):
+            mark = exc.problem_mark
+            print("Invalid syntax in rulebook {}: Line {}, Column {}"
+                  .format(path, mark.line+1, mark.column+1),
+                  file=sys.stderr)
+        else:
+            print("Invalid syntax in rulebook {}".format(path),
+                  file=sys.stderr)
+        return
+
+    bookname = rulebook_data['name']
+    hrule = '#' * (len(bookname) + 4)
+    rule_text = '{}\n# {} #\n{}\n'.format(hrule, bookname, hrule)
+
+    env = rulebook_data.get('vars', {})
+
+    for rule in rulebook_data['rules']:
+        rule_text += '\n## {}\n\n'.format(rule['file'])
+        rule['file'] = "{}{}".format(rule_dir, rule['file'])
+        result = process_rule(rule, env)
+        if result:
+            rule_text += result
+        else:
+            print("Could not locate rule file {} in rulebook {}, aborting"
+                  .format(rule['file'], path), file=sys.stderr)
+            return
+
+    with open(out_dir + path.replace('.yml', '.rules'), 'w') as f:
+        f.write(rule_text)
+
+    print('Successfully processed rulebook: {}'.format(path))
+
+
+def main():
+
+    parser = argparse.ArgumentParser(
+                prog='alertbook',
+                formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=27)
+             )
+    parser.add_argument("-r", "--rules-dir",
+                        help="base directory of rules (default: './rules')",
+                        default="./rules",
+                        metavar="DIR")
+    parser.add_argument("-o", "--out-dir",
+                        help="directory for compiled rules (default: './out')",
+                        default="./out",
+                        metavar="DIR")
+    # parser.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument("book", nargs="+")
+
+    args = parser.parse_args()
+
+    if not args.rules_dir.endswith('/'):
+        args.rules_dir += '/'
+    if not args.out_dir.endswith('/'):
+        args.out_dir += '/'
+
+    # Create out_dir if it doesnt exist
+    try:
+        pathlib.Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print('Error creating out_dir: {}. Aborting'.format(args.out_dir),
+              file=sys.stderr)
+        sys.exit(1)
+
+    for book in args.book:
+        if not book.endswith('.yml'):
+            print("Invalid file: {} does not have .yml suffix".format(book),
+                  file=sys.stderr)
+            continue
+        process_rulebook(book, args.rules_dir, args.out_dir)
+
+
+if __name__ == '__main__':
+    main()
