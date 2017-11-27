@@ -8,7 +8,7 @@ def read(fname):
 
 setup(
     name="alertbook",
-    version="0.0.1",
+    version="0.0.4",
     author="Kyle Kneitinger",
     author_email="kyle@kneit.in",
     description=("An Ansible-inspired Prometheus alert rules compiler"),
@@ -17,8 +17,9 @@ setup(
     url="http://packages.python.org/alertbook",
     scripts=['bin/alertbook'],
     long_description=read('README.md'),
-    install_requires=read('requirements.txt').splitlines(),
+    install_requires=['pyyaml'],
     classifiers=[
+        "Topic :: Software Development :: Compilers",
         "Topic :: Utilities",
         "License :: OSI Approved :: BSD License",
     ],
